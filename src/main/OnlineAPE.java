@@ -9,7 +9,6 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -37,12 +36,13 @@ public class OnlineAPE {
 	private static int max;
 	private static float threshold;	
 	private static String scriptDir;
+	private static int loadPrevious;	
 
 	public static IndexWriter index;
 	public static Analyzer analyzer;
 	public static SearcherManager searcherManager;
 
-	private static Map<Integer, Map<String, String>> featureMaps = new HashMap<Integer, Map<String, String>>();
+	private static Map<String, String> defaultFeatureMap = new HashMap<String, String>();
 
 	public static Logger log;
 
@@ -61,42 +61,49 @@ public class OnlineAPE {
 		System.setProperty("logfile.name",workDir);		
 		OnlineAPE.log = Logger.getLogger(OnlineAPE.class.getName());
 
-		// Check if there is already a working directory
-		log.info("Checking if working directory already exist");
-		if(new File(workDir + "/global").exists() || new File(workDir + "/local").exists()){
-			log.error("There already exist a working directory with the name '" + workDir + "'. \nPlease specify a different working directory or delete all files in it. The program will terminate !!");
-			System.exit(1);
-		}
-		
-		// Create working environment
-		log.info("Creating working environment");
-		try {
-			createDir(OnlineAPE.workDir);
-			createDir(OnlineAPE.workDir + "/global");
-			log.debug("Created directory " + OnlineAPE.workDir + "/global");
-			createDir(OnlineAPE.workDir + "/global/lucene");
-			log.debug("Created directory " + OnlineAPE.workDir + "/global/lucene");
-			createDir(OnlineAPE.workDir + "/global/lm");
-			log.debug("Created directory " + OnlineAPE.workDir + "/global/lm");
-			createDir(OnlineAPE.workDir + "/local");
-			log.debug("Created directory " + OnlineAPE.workDir + "/local");
-			log.info("Created working environment");
-		} catch (Exception e) {
-			log.error("Failed to create working environment  (see trace below). The program will terminate !!");
-			log.error(e);
-			System.exit(1);
+		if(OnlineAPE.loadPrevious == 0){
+
+			// Check if there is already a working directory
+			log.info("Checking if working directory already exist");
+			if(new File(workDir + "/global").exists() || new File(workDir + "/local").exists()){
+				log.error("There already exist some files in '" + workDir + "'. \nPlease specify a different working directory or delete all files in it. The program will terminate !!");
+				System.exit(1);						
+			} 
+
+			// Create a working environment
+			log.info("Creating working environment");
+			try {
+				createDir(OnlineAPE.workDir);
+				createDir(OnlineAPE.workDir + "/global");
+				log.debug("Created directory " + OnlineAPE.workDir + "/global");
+				createDir(OnlineAPE.workDir + "/global/lucene");
+				log.debug("Created directory " + OnlineAPE.workDir + "/global/lucene");
+				createDir(OnlineAPE.workDir + "/global/lm");
+				log.debug("Created directory " + OnlineAPE.workDir + "/global/lm");
+				createDir(OnlineAPE.workDir + "/local");
+				log.debug("Created directory " + OnlineAPE.workDir + "/local");
+				log.info("Created working environment");
+			} catch (Exception e) {
+				log.error("Failed to create working environment  (see trace below). The program will terminate !!");
+				log.error(e);
+				System.exit(1);
+			}
 		}
 
 		// Initialize Lucene parameters
 		log.info("Initializing Lucene parameters");
 		try {
 			initLuceneParams();
-			log.info("Initialized Lucene parameters");			
+			log.info("Initialized Lucene parameters");
 		} catch (Exception e) {
 			log.error("Failed to initialize lucene parameters  (see trace below). The program will terminate !!");
 			log.error(e);
 			System.exit(1);
 		}
+
+		// Initialize a feature map with default weights 
+		log.info("Initializing a feature map with default MOSES weight");
+		initDefaultFeatureMap();
 
 		// Load input documents
 		log.info("Loading necessary documents");
@@ -119,33 +126,18 @@ public class OnlineAPE {
 			log.error(e);
 			System.exit(1);
 		}
-		
-				
+
+
 		int sentID = 0;
 
-		// Initialize a feature map with default weights 
-		log.info("Initializing a feature map with default MOSES weight");
-		Map<String, String> featureMap = new HashMap<String, String>();
-		featureMap.put("LexicalReordering0", "0.3 0.3 0.3 0.3 0.3 0.3");
-		featureMap.put("Distortion0", "0.3");
-		featureMap.put("LM0", "0.5");
-		featureMap.put("LM1", "0.5");
-		featureMap.put("WordPenalty0", "-1");
-		featureMap.put("PhrasePenalty0", "0.2");
-		featureMap.put("TranslationModel0", "0.2 0.2 0.2 0.2");
-		featureMap.put("TranslationModel1", "0.2 0.2 0.2 0.2");
-		featureMap.put("UnknownWordPenalty0", "1");
-		updateFeatureMaps(sentID, featureMap);
-		log.info("Added the initial feature map in the vector of fetaure maps");
-		
 		// Begin online automatic post-editing
 		log.info("Starting online APE module");
 		while (true) {
-			
+
 			long startTime = System.currentTimeMillis();
-			
+
 			sentID += 1;
-			
+
 			log.info("Processing sentence ID = " + sentID);
 
 			String src = null;
@@ -160,10 +152,14 @@ public class OnlineAPE {
 			String lmPath = null;
 			String pePath = null;
 			String expPath = null;
-			featureMap = null;
+			String prevExpPath = null;
+			boolean validFeatureMap = false;
+			Map<String, String> featureMap = null;
 
 			expPath = OnlineAPE.workDir + "/local/" + String.valueOf(sentID);
 			log.debug("Experiment directory = " + expPath);
+
+			prevExpPath = OnlineAPE.workDir + "/local/" + String.valueOf(sentID-1);
 
 			// Read  input documents
 			log.info("Reading segments from all the input documents");
@@ -183,11 +179,16 @@ public class OnlineAPE {
 				log.error(e);
 				System.exit(1);
 			}			
-			
+
 			if (src == null || mt == null) {
 				log.info("Either the source or the MT output (or both) is/are null. The program will stop."); 
 				break;
 			}
+
+			if(new File(expPath).exists()){
+				log.info("Skipping segment ID " + sentID);
+				continue;
+			}			
 
 			// Built joint representation (Assume we already have it)
 			// mtsrc = buildJointRep(mt, src);
@@ -202,7 +203,7 @@ public class OnlineAPE {
 				log.error(e);
 				System.exit(1);
 			}
-			
+
 			// Filter the extracted documents
 			log.info("Filtering the list of extracted documents to create training and development set");
 			try{
@@ -214,7 +215,7 @@ public class OnlineAPE {
 				log.error(e);
 				System.exit(1);
 			}			
-			
+
 			// Set-up experiments
 			log.info("Creating experimental set-up");
 			try{
@@ -222,14 +223,56 @@ public class OnlineAPE {
 				log.debug("Created directory " + expPath);
 				createDataset(src, mt, mtsrc, docs, expPath);
 				log.debug("Saved training, development, and test data set in " + expPath);
-				createMosesIni(expPath, featureMaps.get(sentID - 1));
+
+				if(sentID == 1){
+					featureMap = OnlineAPE.defaultFeatureMap;
+					log.info("Using the default feature weights for segment ID " + sentID);
+					validFeatureMap = true;
+				}else{
+					try{
+						featureMap = loadFeatureMap(prevExpPath + "/tune/moses.ini");
+
+						if(!isValidFeatureMap(featureMap)){
+							validFeatureMap = false;
+							log.error("The feature weights from " + prevExpPath + "/tune/moses.ini are not valid. The program will use un-tuned feature weights");
+						}else{
+							validFeatureMap = true;
+							String features = "";
+							for(String key : featureMap.keySet()){
+								features += "\t" + key + "= " + featureMap.get(key) + "\n";
+							}
+							log.debug("Feature weights are:\n" + features);
+						}
+					}catch(IOException ioe){
+						validFeatureMap = false;
+						log.warn("Warning: Failed to access " + prevExpPath + "/tune/moses.ini for segment ID " + sentID + " (see trace below). The program will use un-tuned feature weights");
+						log.warn(ioe);						
+					}
+				}
+				
+				if(!validFeatureMap){
+					try{
+						featureMap = loadFeatureMap(prevExpPath + "/moses.ini");
+						String features = "";
+						for(String key : featureMap.keySet()){
+							features += "\t" + key + "= " + featureMap.get(key) + "\n";
+						}
+						log.debug("Feature weights are:\n" + features);	
+					}catch(Exception e){
+						log.error("Failed to access feature weights from " + prevExpPath + "/moses.ini (see trace below). The program will terminate!!");
+						log.error(e);
+						System.exit(1);
+					}
+				}
+
+				createMosesIni(expPath, featureMap);
 				log.debug("Created moses.ini");
 			}catch(Exception e){
 				log.error("Failed to create experimental data set for segment ID " + sentID + "  (see trace below). The program will terminate !!");
 				log.error(e);
 				System.exit(1);
 			}
-			
+
 			// Run APE pipeline
 			log.info("Running APE pipeline");
 			try{
@@ -241,7 +284,7 @@ public class OnlineAPE {
 				log.error(e);
 				System.exit(1);
 			}
-			
+
 			// Add the new entry to Lucene index
 			log.info("Adding the new entry to Lucene index");
 			try{
@@ -251,7 +294,7 @@ public class OnlineAPE {
 				log.error(e);
 				System.exit(1);
 			}
-			
+
 			// Update global language model
 			log.info("Updating the global language model");
 			script = scriptDir + "/update_lm.sh";
@@ -266,27 +309,7 @@ public class OnlineAPE {
 				System.exit(1);
 			}
 			
-			// update feature map (weights)
-			log.info("Loading the feature weights from the current run");
-			try{
-				featureMap = loadFeatureMap(expPath + "/tune/moses.ini");					
-			}catch(IOException ioe){
-				log.warn("Warning: Failed to access tune/moses.ini for segment ID " + sentID + " (see trace below). The program will use the feature weights from previous run");
-				log.warn(ioe);				
-			} catch(Exception e){
-				log.error("Failed to update the feature map (weights) for segment ID " + sentID + "  (see trace below). The program will terminate !!");
-				log.error(e);
-				System.exit(1);
-			}
-			log.info("Adding the feature weights to the vector of fetaure maps");			
-			updateFeatureMaps(sentID, featureMap);
-			
-			log.info("Sentence ID " + sentID + " took " + (System.currentTimeMillis() - startTime) + " milliseconds" );
-			
-			/*if(sentID == 100){
-				displayFeatureMaps(featureMaps);
-				break;
-			}*/
+			log.info("Sentence ID " + sentID + " took " + (System.currentTimeMillis() - startTime) + " milliseconds \n" );
 		}		 
 	}
 
@@ -337,10 +360,13 @@ public class OnlineAPE {
 		// Create development files
 		devMtSrcBw = new BufferedWriter(new FileWriter(dataDir + "/dev.mtsrc"));
 		devPeBw = new BufferedWriter(new FileWriter(dataDir + "/dev.pe"));
-		for (Document doc : docs.get(1)) {			
-			devMtSrcBw.write(doc.get("MTSrcSentence") + "\n");
-			devPeBw.write(doc.get("PESentence") + "\n");
-		}
+		// Save the development set if it contains at least 10 sentences
+		if(docs.get(1).size() >= 10){
+			for (Document doc : docs.get(1)) {			
+				devMtSrcBw.write(doc.get("MTSrcSentence") + "\n");
+				devPeBw.write(doc.get("PESentence") + "\n");
+			}
+		}		
 
 		testSrcBw.close();
 		testMtBw.close();
@@ -400,9 +426,9 @@ public class OnlineAPE {
 	}
 
 	public static void updateFeatureMaps(int sentID, Map<String, String> featureMap) {
-		if (featureMap == null)
+		/*if (featureMap == null)
 			featureMap = featureMaps.get(sentID - 1);
-		featureMaps.put(sentID, featureMap);
+		featureMaps.put(sentID, featureMap);*/
 	}
 
 	public static void runMoses(String script, String expPath) throws Exception {
@@ -423,7 +449,7 @@ public class OnlineAPE {
 
 		Directory dir = FSDirectory.open(java.nio.file.Paths.get(indexFolder));
 		IndexWriterConfig iwc = new IndexWriterConfig(OnlineAPE.analyzer);
-		
+
 		IndexWriterConfig.OpenMode mode = OpenMode.CREATE_OR_APPEND; 
 		iwc.setOpenMode(mode);
 		log.debug("IndexWriterConfig openMode is set to " + mode.name());
@@ -446,7 +472,8 @@ public class OnlineAPE {
 		OnlineAPE.max = Integer.valueOf(prop.getProperty("max"));
 		OnlineAPE.threshold = Float.valueOf(prop.getProperty("threshold"));
 		OnlineAPE.workDir = prop.getProperty("workDir");
-		OnlineAPE.scriptDir = prop.getProperty("scriptDir");		
+		OnlineAPE.scriptDir = prop.getProperty("scriptDir");
+		OnlineAPE.loadPrevious = Integer.valueOf(prop.getProperty("loadPrevious"));		
 	}
 
 	public static void updateLM(String script, String lmPath, String pePath) throws Exception {
@@ -467,8 +494,7 @@ public class OnlineAPE {
 	}
 
 	public static Map<String, String> loadFeatureMap(String mosesIni) throws Exception {
-		Set<String> features;
-		features = featureMaps.get(0).keySet();		
+		Set<String> features = defaultFeatureMap.keySet();		
 
 		BufferedReader br = new BufferedReader(new FileReader(mosesIni));
 
@@ -489,7 +515,7 @@ public class OnlineAPE {
 		br.close();
 		return featureMap;
 	}
-	
+
 	public static void displayFeatureMaps(Map<Integer, Map<String, String>> featureMaps){
 		log.debug("Printing all the saved feature weights in feature maps");
 		for(int key : featureMaps.keySet()){
@@ -498,7 +524,48 @@ public class OnlineAPE {
 			for(String k : featureMap.keySet()){
 				log.debug(k + " = " + featureMap.get(k));	
 			}
-			
+
 		}
+	}
+
+	public static void initDefaultFeatureMap(){
+		OnlineAPE.defaultFeatureMap.put("LexicalReordering0", "0.3 0.3 0.3 0.3 0.3 0.3");
+		OnlineAPE.defaultFeatureMap.put("Distortion0", "0.3");
+		OnlineAPE.defaultFeatureMap.put("LM0", "0.5");
+		OnlineAPE.defaultFeatureMap.put("LM1", "0.5");
+		OnlineAPE.defaultFeatureMap.put("WordPenalty0", "-1");
+		OnlineAPE.defaultFeatureMap.put("PhrasePenalty0", "0.2");
+		OnlineAPE.defaultFeatureMap.put("TranslationModel0", "0.2 0.2 0.2 0.2");
+		OnlineAPE.defaultFeatureMap.put("TranslationModel1", "0.2 0.2 0.2 0.2");
+		OnlineAPE.defaultFeatureMap.put("UnknownWordPenalty0", "1");
+	}
+
+	public static boolean isValidFeatureMap(Map<String, String> featureMap){
+		boolean valid = true;
+		String key = null;
+
+		if(featureMap == null){
+			valid = false;
+			OnlineAPE.log.warn("Feature map is null");
+		}else if (featureMap.keySet().size() != 9){
+			valid = false;
+			OnlineAPE.log.warn("Feature map key set size is " + featureMap.keySet().size() + " not equal to 9");
+		} else if((key = containsWeight(featureMap, "0")) != null){
+			valid = false;
+			OnlineAPE.log.warn("Feature map contains a feature (" + key + ") with weight 0");
+		}
+		return valid;
+	}
+
+	public static String containsWeight(Map<String, String> featureMap, String weight){		
+
+		for(String key : featureMap.keySet()){
+			for(String val : featureMap.get(key).split(" ")){
+				if(val.equalsIgnoreCase(weight)){
+					return key;
+				}
+			}
+		}
+		return null;
 	}
 }
