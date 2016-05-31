@@ -9,6 +9,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -36,7 +37,8 @@ public class OnlineAPE {
 	private static int max;
 	private static float threshold;	
 	private static String scriptDir;
-	private static int loadPrevious;	
+	private static int loadPrevious;
+	private static int numberOfUpdates;
 
 	public static IndexWriter index;
 	public static Analyzer analyzer;
@@ -147,7 +149,7 @@ public class OnlineAPE {
 			String mtpeAlign = null;
 
 			TopDocs topDocs = null;
-			ArrayList<ArrayList<Document>> docs = null;
+			List<List<Document>> docs = null;
 			String script = null;
 			String lmPath = null;
 			String pePath = null;
@@ -207,7 +209,9 @@ public class OnlineAPE {
 			// Filter the extracted documents
 			log.info("Filtering the list of extracted documents to create training and development set");
 			try{
-				docs = Filter.luceneScore(topDocs, threshold);
+				//docs = Filter.luceneScore(topDocs, threshold);
+				//docs = Filter.luceneScore_top(topDocs, threshold, 1);
+				docs = Filter.luceneScore(topDocs, threshold, true, 0.2, 5, 5);
 				log.debug("Training data size = " + docs.get(0).size());
 				log.debug("Development data size = " + docs.get(1).size());
 			}catch(Exception e){
@@ -234,14 +238,14 @@ public class OnlineAPE {
 
 						if(!isValidFeatureMap(featureMap)){
 							validFeatureMap = false;
-							log.error("The feature weights from " + prevExpPath + "/tune/moses.ini are not valid. The program will use un-tuned feature weights");
+							log.warn("The feature weights from " + prevExpPath + "/tune/moses.ini are not valid. The program will use un-tuned feature weights");
 						}else{
 							validFeatureMap = true;
 							String features = "";
 							for(String key : featureMap.keySet()){
 								features += "\t" + key + "= " + featureMap.get(key) + "\n";
 							}
-							log.debug("Feature weights are:\n" + features);
+							log.debug("Feature weights are:\n" + features.trim());
 						}
 					}catch(IOException ioe){
 						validFeatureMap = false;
@@ -249,7 +253,7 @@ public class OnlineAPE {
 						log.warn(ioe);						
 					}
 				}
-				
+
 				if(!validFeatureMap){
 					try{
 						featureMap = loadFeatureMap(prevExpPath + "/moses.ini");
@@ -257,7 +261,7 @@ public class OnlineAPE {
 						for(String key : featureMap.keySet()){
 							features += "\t" + key + "= " + featureMap.get(key) + "\n";
 						}
-						log.debug("Feature weights are:\n" + features);	
+						log.debug("Feature weights are:\n" + features.trim());	
 					}catch(Exception e){
 						log.error("Failed to access feature weights from " + prevExpPath + "/moses.ini (see trace below). The program will terminate!!");
 						log.error(e);
@@ -284,32 +288,37 @@ public class OnlineAPE {
 				log.error(e);
 				System.exit(1);
 			}
-
-			// Add the new entry to Lucene index
-			log.info("Adding the new entry to Lucene index");
-			try{
-				Lucene.add(sentID, src, mt, pe, mtsrc, mtpeAlign);
-			}catch(Exception e){
-				log.error("Failed to add new entry in lucene index for segment ID " + sentID + "  (see trace below). The program will terminate !!");
-				log.error(e);
-				System.exit(1);
-			}
-
-			// Update global language model
-			log.info("Updating the global language model");
-			script = scriptDir + "/update_lm.sh";
-			lmPath = OnlineAPE.workDir + "/global/lm";
-			pePath = lmPath + "/test.pe";
-			try {
-				save(pe, pePath);
-				updateLM(script, lmPath, pePath);
-			} catch (Exception e) {
-				log.error("Failed to update the global language model for segment ID " + sentID + "  (see trace below). The program will terminate !!");
-				log.error(e);
-				System.exit(1);
-			}
 			
-			log.info("Sentence ID " + sentID + " took " + (System.currentTimeMillis() - startTime) + " milliseconds \n" );
+			if(OnlineAPE.numberOfUpdates > -1 && sentID > OnlineAPE.numberOfUpdates){
+				log.info("Sentence ID " + sentID + " took " + (System.currentTimeMillis() - startTime) + " milliseconds \n" );
+				continue;
+			}else{
+				// Add the new entry to Lucene index
+				log.info("Adding the new entry to Lucene index");
+				try{
+					Lucene.add(sentID, src, mt, pe, mtsrc, mtpeAlign);
+				}catch(Exception e){
+					log.error("Failed to add new entry in lucene index for segment ID " + sentID + "  (see trace below). The program will terminate !!");
+					log.error(e);
+					System.exit(1);
+				}
+
+				// Update global language model
+				log.info("Updating the global language model");
+				script = scriptDir + "/update_lm.sh";
+				lmPath = OnlineAPE.workDir + "/global/lm";
+				pePath = lmPath + "/test.pe";
+				try {
+					save(pe, pePath);
+					updateLM(script, lmPath, pePath);
+				} catch (Exception e) {
+					log.error("Failed to update the global language model for segment ID " + sentID + "  (see trace below). The program will terminate !!");
+					log.error(e);
+					System.exit(1);
+				}
+
+				log.info("Sentence ID " + sentID + " took " + (System.currentTimeMillis() - startTime) + " milliseconds \n" );
+			}			
 		}		 
 	}
 
@@ -317,7 +326,7 @@ public class OnlineAPE {
 		new File(dir).mkdir();
 	}
 
-	public static void createDataset(String src, String mt, String mtsrc, ArrayList<ArrayList<Document>> docs, String expPath)
+	public static void createDataset(String src, String mt, String mtsrc, List<List<Document>> docs, String expPath)
 			throws Exception {
 		BufferedWriter testSrcBw;
 		BufferedWriter testMtBw;
@@ -360,13 +369,11 @@ public class OnlineAPE {
 		// Create development files
 		devMtSrcBw = new BufferedWriter(new FileWriter(dataDir + "/dev.mtsrc"));
 		devPeBw = new BufferedWriter(new FileWriter(dataDir + "/dev.pe"));
-		// Save the development set if it contains at least 10 sentences
-		if(docs.get(1).size() >= 10){
-			for (Document doc : docs.get(1)) {			
-				devMtSrcBw.write(doc.get("MTSrcSentence") + "\n");
-				devPeBw.write(doc.get("PESentence") + "\n");
-			}
-		}		
+		
+		for (Document doc : docs.get(1)) {			
+			devMtSrcBw.write(doc.get("MTSrcSentence") + "\n");
+			devPeBw.write(doc.get("PESentence") + "\n");
+		}
 
 		testSrcBw.close();
 		testMtBw.close();
@@ -409,7 +416,9 @@ public class OnlineAPE {
 				+ modelPath + "/reordering-table.wbe-msd-bidirectional-fe.gz" + "\n");
 		mosesIniBw.write("Distortion" + "\n");
 		mosesIniBw.write("IRSTLM name=LM0 factor=0 path=" + OnlineAPE.workDir + "/global/lm/global.blm order=3" + "\n");
-		mosesIniBw.write("IRSTLM name=LM1 factor=0 path=" + expPath + "/lm/local.blm order=3" + "\n");
+		if(OnlineAPE.defaultFeatureMap.containsKey("LM1")){
+			mosesIniBw.write("IRSTLM name=LM1 factor=0 path=" + expPath + "/lm/local.blm order=3" + "\n");	
+		}		
 		mosesIniBw.write("" + "\n");
 		mosesIniBw.write("[weight]" + "\n");
 
@@ -473,7 +482,8 @@ public class OnlineAPE {
 		OnlineAPE.threshold = Float.valueOf(prop.getProperty("threshold"));
 		OnlineAPE.workDir = prop.getProperty("workDir");
 		OnlineAPE.scriptDir = prop.getProperty("scriptDir");
-		OnlineAPE.loadPrevious = Integer.valueOf(prop.getProperty("loadPrevious"));		
+		OnlineAPE.loadPrevious = Integer.valueOf(prop.getProperty("loadPrevious"));
+		OnlineAPE.numberOfUpdates = Integer.valueOf(prop.getProperty("numberOfUpdates"));
 	}
 
 	public static void updateLM(String script, String lmPath, String pePath) throws Exception {
