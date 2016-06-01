@@ -44,7 +44,8 @@ public class OnlineAPE {
 	public static Analyzer analyzer;
 	public static SearcherManager searcherManager;
 
-	private static Map<String, String> defaultFeatureMap = new HashMap<String, String>();
+	public static Map<String, String> defaultFeatureMap = new HashMap<String, String>();
+	public static List<Integer> seeds = new ArrayList<Integer>();
 
 	public static Logger log;
 
@@ -107,6 +108,10 @@ public class OnlineAPE {
 		log.info("Initializing a feature map with default MOSES weight");
 		initDefaultFeatureMap();
 
+		// Initialize seeds
+		log.info("Initializing seeds");
+		initSeeds();
+
 		// Load input documents
 		log.info("Loading necessary documents");
 		BufferedReader srcBr = null;
@@ -149,13 +154,14 @@ public class OnlineAPE {
 			String mtpeAlign = null;
 
 			TopDocs topDocs = null;
-			List<List<Document>> docs = null;
+			List<Document> filtered = null;
+			List<List<Document>> split = null; // A list of training set and a list development set
+			List<List<List<Document>>> samples = null; // List of randomly generated splits of training and development set 
 			String script = null;
 			String lmPath = null;
 			String pePath = null;
 			String expPath = null;
-			String prevExpPath = null;
-			boolean validFeatureMap = false;
+			String prevExpPath = null;			
 			Map<String, String> featureMap = null;
 
 			expPath = OnlineAPE.workDir + "/local/" + String.valueOf(sentID);
@@ -207,88 +213,112 @@ public class OnlineAPE {
 			}
 
 			// Filter the extracted documents
-			log.info("Filtering the list of extracted documents to create training and development set");
+			log.info("Filtering the list of extracted documents and creating random splits");
 			try{
-				//docs = Filter.luceneScore(topDocs, threshold);
-				//docs = Filter.luceneScore_top(topDocs, threshold, 1);
-				docs = Filter.luceneScore(topDocs, threshold, true, 0.2, 5, 5);
-				log.debug("Training data size = " + docs.get(0).size());
-				log.debug("Development data size = " + docs.get(1).size());
+				filtered = Filter.luceneScore(topDocs, threshold, -1);
+				log.debug("Filtered data size = " + filtered.size());
 			}catch(Exception e){
 				log.error("Failed to filter documents for segment ID " + sentID + "  (see trace below). The program will terminate !!");
 				log.error(e);
 				System.exit(1);
-			}			
+			}
 
-			// Set-up experiments
-			log.info("Creating experimental set-up");
 			try{
-				createDir(expPath);
-				log.debug("Created directory " + expPath);
-				createDataset(src, mt, mtsrc, docs, expPath);
-				log.debug("Saved training, development, and test data set in " + expPath);
-
-				if(sentID == 1){
-					featureMap = OnlineAPE.defaultFeatureMap;
-					log.info("Using the default feature weights for segment ID " + sentID);
-					validFeatureMap = true;
-				}else{
+				if(filtered.size() == 0){
+					log.info("Can not build APE model for segment ID " + sentID + " because there is no training data");
+					createDir(expPath);
+					log.debug("Created directory " + expPath);
+					createDir(expPath + "/test");
+					save(mt, expPath + "/test/test.ape");
+					log.info("Saved the MT output as the APE output");	
+					
 					try{
-						featureMap = loadFeatureMap(prevExpPath + "/tune/moses.ini");
-
-						if(!isValidFeatureMap(featureMap)){
-							validFeatureMap = false;
-							log.warn("The feature weights from " + prevExpPath + "/tune/moses.ini are not valid. The program will use un-tuned feature weights");
-						}else{
-							validFeatureMap = true;
-							String features = "";
-							for(String key : featureMap.keySet()){
-								features += "\t" + key + "= " + featureMap.get(key) + "\n";
-							}
-							log.debug("Feature weights are:\n" + features.trim());
-						}
-					}catch(IOException ioe){
-						validFeatureMap = false;
-						log.warn("Warning: Failed to access " + prevExpPath + "/tune/moses.ini for segment ID " + sentID + " (see trace below). The program will use un-tuned feature weights");
-						log.warn(ioe);						
-					}
-				}
-
-				if(!validFeatureMap){
-					try{
-						featureMap = loadFeatureMap(prevExpPath + "/moses.ini");
-						String features = "";
-						for(String key : featureMap.keySet()){
-							features += "\t" + key + "= " + featureMap.get(key) + "\n";
-						}
-						log.debug("Feature weights are:\n" + features.trim());	
+						featureMap = getFeatureMap(sentID, prevExpPath);
+						saveFeatureMap(expPath + "/features.out", featureMap);
+						log.debug("Saved featureMap");
 					}catch(Exception e){
-						log.error("Failed to access feature weights from " + prevExpPath + "/moses.ini (see trace below). The program will terminate!!");
+						log.error("Failed to save the featureMap at " + expPath + "/features.out (see trace below). The program will terminate!!");
+						log.error(e);
+						System.exit(1);
+					}
+				}else{
+					createDir(expPath);
+					log.debug("Created directory " + expPath);
+					
+					// Create random splits of training and development set
+					log.info("Creating random splits of training and development set");
+					try{
+						int size = filtered.size();
+						float percent = 20;
+						int dev_min = 5;
+						int dev_max = 5;
+
+						if(((percent/100) * size) > dev_min){
+							size = size < dev_max ? size : dev_max;
+							samples = new ArrayList<List<List<Document>>>();
+
+							for(int seed : seeds){
+								log.debug("Splitting the filtered documents for seed " + seed);
+								split = Filter.split(filtered, size, seed);
+								samples.add(split);
+							}
+							try{
+								writeSeeds(expPath + "/seeds.out", seeds);
+								log.debug("Wrote all the seed values in the file " + expPath + "/seeds.out");
+							}catch(Exception e){
+								log.error("Failed to write the seed values at " + expPath + "/seeds.out (see trace below). The program will terminate!!");
+								log.error(e);
+								System.exit(1);
+							}
+						}else{
+							log.info("No development set for segment ID " + sentID);
+						}
+					}catch(Exception e){
+						log.error("Failed to create random splits for segment ID " + sentID + "  (see trace below). The program will terminate !!");
+						log.error(e);
+						System.exit(1);
+					}			
+
+					// Set-up experiments
+					log.info("Creating experimental set-up");
+					try{						
+
+						createDataset(src, mt, mtsrc, filtered, samples, expPath);
+						log.debug("Saved training, development, and test data set in " + expPath);
+
+						try{
+							featureMap = getFeatureMap(sentID, prevExpPath);
+							saveFeatureMap(expPath + "/features.out", featureMap);
+							log.debug("Saved featureMap");
+						}catch(Exception e){
+							log.error("Failed to save the featureMap at " + expPath + "/features.out (see trace below). The program will terminate!!");
+							log.error(e);
+							System.exit(1);
+						}			
+					}catch(Exception e){
+						log.error("Failed to create experimental data set for segment ID " + sentID + "  (see trace below). The program will terminate !!");
+						log.error(e);
+						System.exit(1);
+					}
+
+					// Run APE pipeline
+					log.info("Running APE pipeline");
+					try{
+						script = scriptDir + "/online_ape_pipeline.sh";
+						runMoses(script, expPath);
+						log.info("APE pipeline finished");
+					}catch(Exception e){
+						log.error("Failed to run online APE pipeline for segment ID " + sentID + "  (see trace below). The program will terminate !!");
 						log.error(e);
 						System.exit(1);
 					}
 				}
-
-				createMosesIni(expPath, featureMap);
-				log.debug("Created moses.ini");
 			}catch(Exception e){
-				log.error("Failed to create experimental data set for segment ID " + sentID + "  (see trace below). The program will terminate !!");
+				log.error("Failed to run for segment ID " + sentID + "  (see trace below). The program will terminate !!");
 				log.error(e);
 				System.exit(1);
 			}
 
-			// Run APE pipeline
-			log.info("Running APE pipeline");
-			try{
-				script = scriptDir + "/online_ape_pipeline.sh";
-				runMoses(script, expPath);
-				log.info("APE pipeline finished");
-			}catch(Exception e){
-				log.error("Failed to run online APE pipeline for segment ID " + sentID + "  (see trace below). The program will terminate !!");
-				log.error(e);
-				System.exit(1);
-			}
-			
 			if(OnlineAPE.numberOfUpdates > -1 && sentID > OnlineAPE.numberOfUpdates){
 				log.info("Sentence ID " + sentID + " took " + (System.currentTimeMillis() - startTime) + " milliseconds \n" );
 				continue;
@@ -326,65 +356,75 @@ public class OnlineAPE {
 		new File(dir).mkdir();
 	}
 
-	public static void createDataset(String src, String mt, String mtsrc, List<List<Document>> docs, String expPath)
+	public static void createDataset(String src, String mt, String mtsrc, List<Document> filtered, List<List<List<Document>>> samples, String expPath)
 			throws Exception {
-		BufferedWriter testSrcBw;
-		BufferedWriter testMtBw;
-		BufferedWriter testMtSrcBw;
 
-		//BufferedWriter trainSrcBw;
-		//BufferedWriter trainMtBw;
+		String dataDir = expPath + "/data";
+
+		createDir(dataDir);
+
+		// Create test file
+		BufferedWriter testMtSrcBw;
+		testMtSrcBw = new BufferedWriter(new FileWriter(dataDir + "/test.mtsrc"));
+		testMtSrcBw.write(mtsrc + "\n");		
+		testMtSrcBw.close();
+
 		BufferedWriter trainMtSrcBw;
 		BufferedWriter trainPeBw;
 		BufferedWriter trainMtPeAlignBw;
 
-		BufferedWriter devMtSrcBw;
-		BufferedWriter devPeBw;
-
-		String dataDir = expPath + "/data";
-		createDir(dataDir);
-
-		// Create test files
-		testSrcBw = new BufferedWriter(new FileWriter(dataDir + "/test.src"));
-		testMtBw = new BufferedWriter(new FileWriter(dataDir + "/test.mt"));
-		testMtSrcBw = new BufferedWriter(new FileWriter(dataDir + "/test.mtsrc"));
-		testSrcBw.write(src + "\n");
-		testMtBw.write(mt + "\n");
-		testMtSrcBw.write(mtsrc + "\n");
-
-		// Create training files
-		//trainSrcBw = new BufferedWriter(new FileWriter(dataDir + "/train.src"));
-		//trainMtBw = new BufferedWriter(new FileWriter(dataDir + "/train.mt"));
+		// Create training files		
 		trainMtSrcBw = new BufferedWriter(new FileWriter(dataDir + "/train.mtsrc"));
 		trainPeBw = new BufferedWriter(new FileWriter(dataDir + "/train.pe"));
 		trainMtPeAlignBw = new BufferedWriter(new FileWriter(dataDir + "/align.mt.pe"));
-		for (Document doc : docs.get(0)) {
-			//trainSrcBw.write(doc.get("SourceSentence") + "\n");
-			//trainMtBw.write(doc.get("MTSentence") + "\n");
+		for (Document doc : filtered) {			
 			trainMtSrcBw.write(doc.get("MTSrcSentence") + "\n");
 			trainPeBw.write(doc.get("PESentence") + "\n");
 			trainMtPeAlignBw.write(doc.get("Alignment") + "\n");
 		}
-
-		// Create development files
-		devMtSrcBw = new BufferedWriter(new FileWriter(dataDir + "/dev.mtsrc"));
-		devPeBw = new BufferedWriter(new FileWriter(dataDir + "/dev.pe"));
-		
-		for (Document doc : docs.get(1)) {			
-			devMtSrcBw.write(doc.get("MTSrcSentence") + "\n");
-			devPeBw.write(doc.get("PESentence") + "\n");
-		}
-
-		testSrcBw.close();
-		testMtBw.close();
-		testMtSrcBw.close();
-		//trainSrcBw.close();
-		//trainMtBw.close();
 		trainMtSrcBw.close();
 		trainPeBw.close();
-		trainMtPeAlignBw.close();		
-		devMtSrcBw.close();
-		devPeBw.close();
+		trainMtPeAlignBw.close();
+
+		BufferedWriter devMtSrcBw;
+		BufferedWriter devPeBw;
+
+		// Create data set (train and dev) for each samples		
+		if(samples != null){
+			int count = 0;
+			for(int seed : OnlineAPE.seeds){
+				String dir = dataDir + "/" + seed;
+				createDir(dir);
+
+				trainMtSrcBw = new BufferedWriter(new FileWriter(dir + "/train.mtsrc"));
+				trainPeBw = new BufferedWriter(new FileWriter(dir + "/train.pe"));
+				trainMtPeAlignBw = new BufferedWriter(new FileWriter(dir + "/align.mt.pe"));
+				devMtSrcBw = new BufferedWriter(new FileWriter(dir + "/dev.mtsrc"));
+				devPeBw = new BufferedWriter(new FileWriter(dir + "/dev.pe"));
+
+				List<List<Document>> sample = samples.get(count);
+				List<Document> train = sample.get(0);
+				List<Document> dev = sample.get(1);
+
+				for (Document doc : train) {			
+					trainMtSrcBw.write(doc.get("MTSrcSentence") + "\n");
+					trainPeBw.write(doc.get("PESentence") + "\n");
+					trainMtPeAlignBw.write(doc.get("Alignment") + "\n");
+				}
+
+				for (Document doc : dev) {			
+					devMtSrcBw.write(doc.get("MTSrcSentence") + "\n");
+					devPeBw.write(doc.get("PESentence") + "\n");
+				}
+
+				trainMtSrcBw.close();
+				trainPeBw.close();
+				trainMtPeAlignBw.close();
+				devMtSrcBw.close();
+				devPeBw.close();
+				count += 1;
+			}	
+		}
 
 	}
 
@@ -497,9 +537,9 @@ public class OnlineAPE {
 		p.waitFor();
 	}
 
-	public static void save(String data, String filePath) throws Exception {
-		BufferedWriter bw = new BufferedWriter(new FileWriter(filePath));
-		bw.write(data + "\n");
+	public static void save(String data, String file) throws Exception {
+		BufferedWriter bw = new BufferedWriter(new FileWriter(file));
+		bw.write(data);
 		bw.close();
 	}
 
@@ -577,5 +617,78 @@ public class OnlineAPE {
 			}
 		}
 		return null;
+	}
+
+	public static void writeSeeds(String file, List<Integer> seeds) throws Exception{
+		BufferedWriter bw = new BufferedWriter(new FileWriter(file));
+
+		for(int seed : seeds){
+			bw.write(seed + "\n");
+		}
+
+		bw.close();
+	}
+
+	public static void initSeeds(){
+		OnlineAPE.seeds.add(1234);
+		OnlineAPE.seeds.add(1235);
+		OnlineAPE.seeds.add(1236);
+	}	
+
+	public static void saveFeatureMap(String file, Map<String, String> featureMap) throws Exception{
+		BufferedWriter bw = new BufferedWriter(new FileWriter(file));
+
+		for(String key : featureMap.keySet()){
+			bw.write(key + "= " + featureMap.get(key) + "\n");
+		}
+
+		bw.close();
+	}
+
+	public static Map<String, String> getFeatureMap(int sentID, String prevExpPath) throws Exception{
+		Map<String, String> featureMap = null;
+		boolean validFeatureMap = false;
+		
+		if(sentID == 1){
+			featureMap = OnlineAPE.defaultFeatureMap;
+			log.info("Using the default feature weights for segment ID " + sentID);
+			validFeatureMap = true;
+		}else{
+			try{
+				featureMap = loadFeatureMap(prevExpPath + "/tune/moses.ini");
+
+				if(!isValidFeatureMap(featureMap)){
+					validFeatureMap = false;
+					log.warn("The feature weights from " + prevExpPath + "/tune/moses.ini are not valid. The program will use un-tuned feature weights");
+				}else{
+					validFeatureMap = true;
+					String features = "";
+					for(String key : featureMap.keySet()){
+						features += "\t" + key + "= " + featureMap.get(key) + "\n";
+					}
+					log.debug("Feature weights are:\n" + features.trim());
+				}
+			}catch(IOException ioe){
+				validFeatureMap = false;
+				log.warn("Warning: Failed to access " + prevExpPath + "/tune/moses.ini for segment ID " + sentID + " (see trace below). The program will use un-tuned feature weights");
+				log.warn(ioe);						
+			}
+		}
+
+		if(!validFeatureMap){
+			try{
+				featureMap = loadFeatureMap(prevExpPath + "/features.out");
+				String features = "";
+				for(String key : featureMap.keySet()){
+					features += "\t" + key + "= " + featureMap.get(key) + "\n";
+				}
+				log.debug("Feature weights are:\n" + features.trim());	
+			}catch(Exception e){
+				log.error("Failed to access feature weights from " + prevExpPath + "/features.out (see trace below). The program will terminate!!");
+				log.error(e);
+				System.exit(1);
+			}
+		}
+		return featureMap;
 	}
 }

@@ -13,71 +13,28 @@ import org.apache.lucene.search.TopDocs;
 public class Filter {
 
 	// The development set contains the k segments after the training set
-	public static List<List<Document>> luceneScore(TopDocs topDocs, double score) throws Exception{		
+	public static List<Document> luceneScore(TopDocs topDocs, double score, int topk) throws Exception{		
 
-		List<Document> train = new ArrayList<Document>();
-		List<Document> dev = new ArrayList<Document>();
+		List<Document> filtered = new ArrayList<Document>();		
 		IndexSearcher searcher = OnlineAPE.searcherManager.acquire();
 
 		for (ScoreDoc scoreDoc : topDocs.scoreDocs) {
 			if (((double) scoreDoc.score) >= score) {				
-				train.add(searcher.doc(scoreDoc.doc));					
-			} else {
-				dev.add(searcher.doc(scoreDoc.doc));
-				if(dev.size() == 10){
-					break;
-				}
-			}
+				filtered.add(searcher.doc(scoreDoc.doc));					
+			}else
+				break;
 		}
 		OnlineAPE.searcherManager.release(searcher);
-
-		List<List<Document>> result = new ArrayList<List<Document>>(2);
-		result.add(train);
-
-		// Minimum criteria for the development set
-		if(dev.size() < 10){
-			dev = new ArrayList<Document>();
-		}
-		result.add(dev);
-
-		return result;
-	}
-
-	// The development set contains the top-k segments of the training set
-	public static ArrayList<ArrayList<Document>> luceneScore_top(TopDocs topDocs, double score, int topk) throws Exception{		
-
-		ArrayList<Document> train = new ArrayList<Document>();
-		ArrayList<Document> dev = new ArrayList<Document>();
-		IndexSearcher searcher = OnlineAPE.searcherManager.acquire();
-
-		for (ScoreDoc scoreDoc : topDocs.scoreDocs) {
-			if (((double) scoreDoc.score) >= score) {				
-				train.add(searcher.doc(scoreDoc.doc));					
-			}else{
-				break;
-			}
-		}
-		OnlineAPE.searcherManager.release(searcher);
-
-		int count = 0;
-		for(Document d : train){
-			count += 1;
-			if(count <= topk){
-				dev.add(d);
-			}else{
-				break;
-			}
+		
+		if(topk > 0){
+			filtered = filtered.subList(0, topk);
 		}
 
-		ArrayList<ArrayList<Document>> result = new ArrayList<ArrayList<Document>>(2);
-		result.add(train);
-		result.add(dev);
-
-		return result;
+		return filtered;
 	}
 
 	// The development set contains the k segments after the training set
-	public static List<List<Document>> luceneScore(TopDocs topDocs, double threshold, boolean devFromThresh, double devSize, int devMin, int devMax) throws Exception{		
+	public static List<List<Document>> luceneScore(TopDocs topDocs, double threshold, boolean devFromThresh, double devSize, int devMin, int devMax, int seed) throws Exception{		
 		List<Document> filtered = new ArrayList<Document>();
 		List<Document> train = new ArrayList<Document>();
 		List<Document> dev = new ArrayList<Document>();
@@ -98,7 +55,7 @@ public class Filter {
 			size = size < devMax ? size : devMax;
 			
 			if(size >= devMin){
-				Collections.shuffle(filtered, new Random(1234));
+				Collections.shuffle(filtered, new Random(seed));
 				dev = filtered.subList(0, size);
 				train = filtered.subList(size, filtered.size());
 			}else{
@@ -116,6 +73,16 @@ public class Filter {
 		result.add(train);
 		result.add(dev);
 
+		return result;
+	}
+	
+	public static List<List<Document>> split(List<Document> docs, int size, int seed){
+		List<List<Document>> result = new ArrayList<List<Document>>();
+		
+		Collections.shuffle(docs, new Random(seed));
+		result.add(docs.subList(0, size));
+		result.add(docs.subList(size, docs.size()));
+		
 		return result;
 	}
 }

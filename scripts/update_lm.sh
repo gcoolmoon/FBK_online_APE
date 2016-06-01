@@ -1,7 +1,8 @@
 #!/bin/bash
 
-IRSTLM="/home/chatterjee/Public/irstlm-5.80.08/bin"
-export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/home/chatterjee/Public/irstlm-5.80.08/lib
+script_dir=$(dirname $0)
+
+source $script_dir/conf_env
 
 lm_path=$1
 pe_path=$2

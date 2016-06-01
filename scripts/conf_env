@@ -1,0 +1,8 @@
+MOSES_DIR="/hltsrv1/software/moses/moses-20150228_kenlm_cmph_xmlrpc_irstlm_master"
+EXTERNAL_BIN_DIR="/hltsrv1/software/mgiza/bin"
+MERT_DIR="$MOSES_DIR/bin/"
+MERT_OPTS="--sctype TER --scconfig weights:1.0"
+IRSTLM="/hltsrv1/software/irstlm/irstlm-5.80.08/bin"
+
+TUNE_CMD="$MOSES_DIR/scripts/training/mert-moses.pl"
+
