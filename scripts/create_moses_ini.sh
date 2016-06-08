@@ -4,21 +4,15 @@ script_dir=$(dirname $0)
 
 source $script_dir/conf_env
 
-SRC_EXT="mtsrc"
-TGT_EXT="pe"
-
-WORK_DIR=""
 global_lm=""
 local_lm=""
 feature_weights=""
+moses_ini=""
+model_path=""
 
 while [[ $# > 1 ]]
 do
     case "$1" in
-        --work_dir)
-            WORK_DIR="$2"
-            shift 2
-            ;;
         --global_lm)
             global_lm="$2"
             shift 2
@@ -31,16 +25,20 @@ do
             feature_weights="$2"
             shift 2
             ;;
+        --moses_ini)
+            moses_ini="$2"
+            shift 2
+            ;;
+        --model_path)
+            model_path="$2"
+            shift 2
+            ;;
         *)
             echo "Command line error"
             exit 1
             ;;
     esac
 done
-
-model_path="$WORK_DIR/train/model"
-moses_ini="$model_path/moses.ini"
-
 
 echo "[input-factors]" > $moses_ini
 echo "0" >> $moses_ini

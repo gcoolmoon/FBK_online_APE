@@ -33,9 +33,9 @@ tgt="$DATA_DIR/dev.$TGT_EXT"
 moses_ini="$WORK_DIR/train/model/moses.ini"
 tune_dir="$WORK_DIR/tune"
 
-mkdir $tune_dir
+mkdir -p $tune_dir
 
-$MOSES_DIR/scripts/training/mert-moses.pl $src $tgt $MOSES_DIR/bin/moses $moses_ini --working-dir $WORK_DIR/tune --mertdir $MERT_DIR --batch-mira --return-best-dev --batch-mira-args '-J 10' --decoder-flags="-threads 5" > $tune_dir/tune.out 2> $tune_dir/tune.err
+$MOSES_DIR/scripts/training/mert-moses.pl $src $tgt $MOSES_DIR/bin/moses $moses_ini --working-dir $WORK_DIR/tune --mertdir $MERT_DIR --batch-mira --return-best-dev --decoder-flags="-threads 5" > $tune_dir/tune.out 2> $tune_dir/tune.err # --batch-mira-args '-J 10'
 
 rm -rf $WORK_DIR/tune/filtered
 find $WORK_DIR/tune -type f ! -name 'moses.ini' -delete

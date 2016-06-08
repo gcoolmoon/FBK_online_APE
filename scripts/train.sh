@@ -44,8 +44,7 @@ align_file="$DATA_DIR/align.mt.pe"
 
 cp "$align_file" "$DATA_DIR/align.mt.pe.grow-diag-final-and"
 
-mkdir "$WORK_DIR/train"
-mkdir "$WORK_DIR/train/model"
+mkdir -p "$WORK_DIR/train/model"
 
 TRAIN_MODEL_OPTS="-alignment grow-diag-final-and \
 		-reordering msd-bidirectional-fe \

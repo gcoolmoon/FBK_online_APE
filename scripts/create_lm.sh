@@ -36,8 +36,8 @@ blm="$WORK_DIR/lm/local.blm"
 
 mkdir "$WORK_DIR/lm"
 
-$IRSTLM/tlm -tr="$tgt" -n=3 -lm=wb -bo=yes -o="$lm"
-$IRSTLM/compile-lm "$lm" "$blm"
+$IRSTLM/tlm -tr="$tgt" -n=3 -lm=wb -bo=yes -o="$lm" >& "$WORK_DIR/lm/log"
+$IRSTLM/compile-lm "$lm" "$blm" >& "$WORK_DIR/lm/log"
 
 rm "$lm"
 rm "$tgt"
