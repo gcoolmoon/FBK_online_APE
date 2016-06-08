@@ -139,7 +139,7 @@ public class OnlineAPE {
 
 		// Begin online automatic post-editing
 		log.info("Starting online APE module");
-		while (true) {
+		while (true) {			
 
 			long startTime = System.currentTimeMillis();
 
@@ -231,7 +231,7 @@ public class OnlineAPE {
 					createDir(expPath + "/test");
 					save(mt, expPath + "/test/test.ape");
 					log.info("Saved the MT output as the APE output");	
-					
+
 					try{
 						featureMap = getFeatureMap(sentID, prevExpPath);
 						saveFeatureMap(expPath + "/features.out", featureMap);
@@ -244,7 +244,7 @@ public class OnlineAPE {
 				}else{
 					createDir(expPath);
 					log.debug("Created directory " + expPath);
-					
+
 					// Create random splits of training and development set
 					log.info("Creating random splits of training and development set");
 					try{
@@ -305,8 +305,8 @@ public class OnlineAPE {
 					log.info("Running APE pipeline");
 					try{
 						script = scriptDir + "/online_ape_pipeline.sh";
-						runMoses(script, expPath);
-						log.info("APE pipeline finished");
+						int exitVal = runMoses(script, expPath);
+						log.info("APE pipeline exit value for sent ID " + sentID + " is " + exitVal);						
 					}catch(Exception e){
 						log.error("Failed to run online APE pipeline for segment ID " + sentID + "  (see trace below). The program will terminate !!");
 						log.error(e);
@@ -403,8 +403,8 @@ public class OnlineAPE {
 				devPeBw = new BufferedWriter(new FileWriter(dir + "/dev.pe"));
 
 				List<List<Document>> sample = samples.get(count);
-				List<Document> train = sample.get(0);
-				List<Document> dev = sample.get(1);
+				List<Document> dev = sample.get(0);
+				List<Document> train = sample.get(1);				
 
 				for (Document doc : train) {			
 					trainMtSrcBw.write(doc.get("MTSrcSentence") + "\n");
@@ -480,7 +480,7 @@ public class OnlineAPE {
 		featureMaps.put(sentID, featureMap);*/
 	}
 
-	public static void runMoses(String script, String expPath) throws Exception {
+	public static int runMoses(String script, String expPath) throws Exception {
 		String command;
 		Process p;
 
@@ -488,7 +488,15 @@ public class OnlineAPE {
 		log.debug("APE pipeline command is " + command);
 
 		p = Runtime.getRuntime().exec(command);
-		p.waitFor();
+		
+		StreamGobbler sgOut = new StreamGobbler(p.getInputStream(), "OUTPUT");
+		StreamGobbler sgErr = new StreamGobbler(p.getInputStream(), "ERROR");
+		
+		sgOut.start();
+		sgErr.start();
+		
+		int exitVal = p.waitFor();
+		return exitVal;		
 	}
 
 	public static void initLuceneParams() throws Exception {
@@ -539,7 +547,7 @@ public class OnlineAPE {
 
 	public static void save(String data, String file) throws Exception {
 		BufferedWriter bw = new BufferedWriter(new FileWriter(file));
-		bw.write(data);
+		bw.write(data + "\n");
 		bw.close();
 	}
 
@@ -597,10 +605,7 @@ public class OnlineAPE {
 		if(featureMap == null){
 			valid = false;
 			OnlineAPE.log.warn("Feature map is null");
-		}else if (featureMap.keySet().size() != 9){
-			valid = false;
-			OnlineAPE.log.warn("Feature map key set size is " + featureMap.keySet().size() + " not equal to 9");
-		} else if((key = containsWeight(featureMap, "0")) != null){
+		}else if((key = containsWeight(featureMap, "0")) != null){
 			valid = false;
 			OnlineAPE.log.warn("Feature map contains a feature (" + key + ") with weight 0");
 		}
@@ -611,7 +616,7 @@ public class OnlineAPE {
 
 		for(String key : featureMap.keySet()){
 			for(String val : featureMap.get(key).split(" ")){
-				if(val.equalsIgnoreCase(weight)){
+				if(Float.parseFloat(val) == 0){
 					return key;
 				}
 			}
@@ -648,7 +653,7 @@ public class OnlineAPE {
 	public static Map<String, String> getFeatureMap(int sentID, String prevExpPath) throws Exception{
 		Map<String, String> featureMap = null;
 		boolean validFeatureMap = false;
-		
+
 		if(sentID == 1){
 			featureMap = OnlineAPE.defaultFeatureMap;
 			log.info("Using the default feature weights for segment ID " + sentID);

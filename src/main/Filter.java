@@ -78,10 +78,14 @@ public class Filter {
 	
 	public static List<List<Document>> split(List<Document> docs, int size, int seed){
 		List<List<Document>> result = new ArrayList<List<Document>>();
+		List<Document> tempDocs = new ArrayList<Document>();
 		
-		Collections.shuffle(docs, new Random(seed));
-		result.add(docs.subList(0, size));
-		result.add(docs.subList(size, docs.size()));
+		tempDocs.addAll(docs);
+		
+		Collections.shuffle(tempDocs, new Random(seed));		
+		
+		result.add(tempDocs.subList(0, size));
+		result.add(tempDocs.subList(size, tempDocs.size()));
 		
 		return result;
 	}
