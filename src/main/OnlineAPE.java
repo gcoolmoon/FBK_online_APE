@@ -7,7 +7,9 @@ import java.io.FileInputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.lang.ProcessBuilder.Redirect;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,13 +34,18 @@ public class OnlineAPE {
 	private static String mtFile;
 	private static String peFile;
 	private static String mtsrcFile;
+	private static String pesrcFile;
 	private static String mtpeAlignFile;
+	private static String pepeAlignFile;
 	private static String workDir;
 	private static int max;
 	private static float threshold;	
 	private static String scriptDir;
 	private static int loadPrevious;
 	private static int numberOfUpdates;
+	private static float devPercent;
+	private static int devMax;
+	private static int devMin;
 
 	public static IndexWriter index;
 	public static Analyzer analyzer;
@@ -47,7 +54,12 @@ public class OnlineAPE {
 	public static Map<String, String> defaultFeatureMap = new HashMap<String, String>();
 	public static List<Integer> seeds = new ArrayList<Integer>();
 
-	public static Logger log;
+	public static Logger log; // log file for the java (this) process
+
+	public static File logOut;
+	public static File logErr;
+	public static BufferedWriter bwLogOut; // log file for external processes
+	public static BufferedWriter bwLogErr; // log file for external processes
 
 	public static void main(String[] args) {		
 
@@ -63,6 +75,15 @@ public class OnlineAPE {
 		//Initialize logger
 		System.setProperty("logfile.name",workDir);		
 		OnlineAPE.log = Logger.getLogger(OnlineAPE.class.getName());
+
+		// Initialize external log files
+		try{
+			initializeLogs();
+		}catch(Exception e){
+			OnlineAPE.log.error(e);
+			System.exit(1);
+		}
+
 
 		if(OnlineAPE.loadPrevious == 0){
 
@@ -118,14 +139,18 @@ public class OnlineAPE {
 		BufferedReader mtBr = null;
 		BufferedReader peBr = null;
 		BufferedReader mtsrcBr = null;
+		BufferedReader pesrcBr = null;
 		BufferedReader mtpeAlignBr = null;
+		BufferedReader pepeAlignBr = null;
 
 		try {
 			srcBr = new BufferedReader(new FileReader(srcFile));
 			mtBr = new BufferedReader(new FileReader(mtFile));
 			peBr = new BufferedReader(new FileReader(peFile));
 			mtsrcBr = new BufferedReader(new FileReader(mtsrcFile));
+			pesrcBr = new BufferedReader(new FileReader(pesrcFile));
 			mtpeAlignBr = new BufferedReader(new FileReader(mtpeAlignFile));
+			pepeAlignBr = new BufferedReader(new FileReader(pepeAlignFile));
 			log.info("Loaded all the necessary documents");
 
 		} catch (Exception e) {
@@ -134,7 +159,17 @@ public class OnlineAPE {
 			System.exit(1);
 		}
 
-
+		// Create directories
+		try{
+			createDir(OnlineAPE.workDir + "/global/lm");
+			createDir(OnlineAPE.workDir + "/global/lucene");
+			createDir(OnlineAPE.workDir + "/local");
+		}catch(Exception e){
+			log.error("Failed to create initial directories. The program will terminate !!");
+			log.error(e);
+			System.exit(1);
+		}		
+		
 		int sentID = 0;
 
 		// Begin online automatic post-editing
@@ -151,7 +186,9 @@ public class OnlineAPE {
 			String mt = null;
 			String pe = null;
 			String mtsrc = null;
+			String pesrc = null;
 			String mtpeAlign = null;
+			String pepeAlign = null;
 
 			TopDocs topDocs = null;
 			List<Document> filtered = null;
@@ -180,8 +217,12 @@ public class OnlineAPE {
 				log.debug("Post-edition = " + pe);
 				mtsrc = mtsrcBr.readLine(); // Assume we have it
 				log.debug("Joint representation = " + mtsrc);
+				pesrc = pesrcBr.readLine(); // Assume we have it
+				log.debug("Joint representation = " + pesrc);
 				mtpeAlign = mtpeAlignBr.readLine(); // Assume we have it
 				log.debug("MT-PE alignment = " + mtpeAlign);
+				pepeAlign = pepeAlignBr.readLine(); // Assume we have it
+				log.debug("MT-PE alignment = " + pepeAlign);
 			}catch(Exception e){
 				log.error("Failed to read input segment ID " + sentID + "  (see trace below). The program will terminate !!");
 				log.error(e);
@@ -248,13 +289,10 @@ public class OnlineAPE {
 					// Create random splits of training and development set
 					log.info("Creating random splits of training and development set");
 					try{
-						int size = filtered.size();
-						float percent = 20;
-						int dev_min = 5;
-						int dev_max = 5;
+						int size = filtered.size();						
 
-						if(((percent/100) * size) > dev_min){
-							size = size < dev_max ? size : dev_max;
+						if(((OnlineAPE.devPercent/100) * size) >= OnlineAPE.devMin){
+							size = size < OnlineAPE.devMax ? size : OnlineAPE.devMax;
 							samples = new ArrayList<List<List<Document>>>();
 
 							for(int seed : seeds){
@@ -326,7 +364,7 @@ public class OnlineAPE {
 				// Add the new entry to Lucene index
 				log.info("Adding the new entry to Lucene index");
 				try{
-					Lucene.add(sentID, src, mt, pe, mtsrc, mtpeAlign);
+					Lucene.add(sentID, src, mt, pe, mtsrc, pesrc, mtpeAlign, pepeAlign);
 				}catch(Exception e){
 					log.error("Failed to add new entry in lucene index for segment ID " + sentID + "  (see trace below). The program will terminate !!");
 					log.error(e);
@@ -340,7 +378,8 @@ public class OnlineAPE {
 				pePath = lmPath + "/test.pe";
 				try {
 					save(pe, pePath);
-					updateLM(script, lmPath, pePath);
+					int exitVal = updateLM(script, lmPath, pePath);					
+					log.debug("Global language model updated with exit value " + exitVal);
 				} catch (Exception e) {
 					log.error("Failed to update the global language model for segment ID " + sentID + "  (see trace below). The program will terminate !!");
 					log.error(e);
@@ -349,11 +388,11 @@ public class OnlineAPE {
 
 				log.info("Sentence ID " + sentID + " took " + (System.currentTimeMillis() - startTime) + " milliseconds \n" );
 			}			
-		}		 
+		}
 	}
 
-	public static void createDir(String dir) throws Exception {
-		new File(dir).mkdir();
+	public static boolean createDir(String dir) throws Exception {
+		return new File(dir).mkdirs();
 	}
 
 	public static void createDataset(String src, String mt, String mtsrc, List<Document> filtered, List<List<List<Document>>> samples, String expPath)
@@ -380,8 +419,13 @@ public class OnlineAPE {
 		for (Document doc : filtered) {			
 			trainMtSrcBw.write(doc.get("MTSrcSentence") + "\n");
 			trainPeBw.write(doc.get("PESentence") + "\n");
-			trainMtPeAlignBw.write(doc.get("Alignment") + "\n");
-		}
+			trainMtPeAlignBw.write(doc.get("MTPEAlignment") + "\n");
+			
+			trainMtSrcBw.write(doc.get("PESrcSentence") + "\n");
+			trainPeBw.write(doc.get("PESentence") + "\n");
+			trainMtPeAlignBw.write(doc.get("PEPEAlignment") + "\n");
+		}		
+		
 		trainMtSrcBw.close();
 		trainPeBw.close();
 		trainMtPeAlignBw.close();
@@ -409,7 +453,11 @@ public class OnlineAPE {
 				for (Document doc : train) {			
 					trainMtSrcBw.write(doc.get("MTSrcSentence") + "\n");
 					trainPeBw.write(doc.get("PESentence") + "\n");
-					trainMtPeAlignBw.write(doc.get("Alignment") + "\n");
+					trainMtPeAlignBw.write(doc.get("MTPEAlignment") + "\n");
+					
+					trainMtSrcBw.write(doc.get("PESrcSentence") + "\n");
+					trainPeBw.write(doc.get("PESentence") + "\n");
+					trainMtPeAlignBw.write(doc.get("PEPEAlignment") + "\n");
 				}
 
 				for (Document doc : dev) {			
@@ -474,28 +522,26 @@ public class OnlineAPE {
 		mosesIniBw.close();
 	}
 
-	public static void updateFeatureMaps(int sentID, Map<String, String> featureMap) {
-		/*if (featureMap == null)
-			featureMap = featureMaps.get(sentID - 1);
-		featureMaps.put(sentID, featureMap);*/
-	}
-
 	public static int runMoses(String script, String expPath) throws Exception {
-		String command;
-		Process p;
-
-		command = script + " --data_dir " + expPath + "/data " + "--work_dir " + expPath;
+		OnlineAPE.bwLogOut.write("BEGIN--runMoses--" + expPath + "\n");
+		OnlineAPE.bwLogOut.flush();
+		OnlineAPE.bwLogErr.write("BEGIN--runMoses--" + expPath + "\n");
+		OnlineAPE.bwLogErr.flush();
+		
+		String command = script + " --data_dir " + expPath + "/data " + "--work_dir " + expPath;
 		log.debug("APE pipeline command is " + command);
-
-		p = Runtime.getRuntime().exec(command);
 		
-		StreamGobbler sgOut = new StreamGobbler(p.getInputStream(), "OUTPUT");
-		StreamGobbler sgErr = new StreamGobbler(p.getInputStream(), "ERROR");
-		
-		sgOut.start();
-		sgErr.start();
-		
+		ProcessBuilder pb = new ProcessBuilder(Arrays.asList(command.split(" ")));
+		pb.redirectOutput(Redirect.appendTo(OnlineAPE.logOut));
+		pb.redirectError(Redirect.appendTo(OnlineAPE.logErr));
+		Process p = pb.start();
 		int exitVal = p.waitFor();
+
+		OnlineAPE.bwLogOut.write("END\n");
+		OnlineAPE.bwLogOut.flush();
+		OnlineAPE.bwLogErr.write("END\n");
+		OnlineAPE.bwLogErr.flush();
+		
 		return exitVal;		
 	}
 
@@ -525,24 +571,39 @@ public class OnlineAPE {
 		OnlineAPE.mtFile = prop.getProperty("mtFile");
 		OnlineAPE.peFile = prop.getProperty("peFile");
 		OnlineAPE.mtsrcFile = prop.getProperty("mtsrcFile");
+		OnlineAPE.pesrcFile = prop.getProperty("pesrcFile");
 		OnlineAPE.mtpeAlignFile = prop.getProperty("mtpeAlignFile");
+		OnlineAPE.pepeAlignFile = prop.getProperty("pepeAlignFile");
 		OnlineAPE.max = Integer.valueOf(prop.getProperty("max"));
 		OnlineAPE.threshold = Float.valueOf(prop.getProperty("threshold"));
 		OnlineAPE.workDir = prop.getProperty("workDir");
 		OnlineAPE.scriptDir = prop.getProperty("scriptDir");
 		OnlineAPE.loadPrevious = Integer.valueOf(prop.getProperty("loadPrevious"));
 		OnlineAPE.numberOfUpdates = Integer.valueOf(prop.getProperty("numberOfUpdates"));
+		OnlineAPE.devPercent = Float.valueOf(prop.getProperty("devPercent"));
+		OnlineAPE.devMax = Integer.valueOf(prop.getProperty("devMax"));
+		OnlineAPE.devMin = Integer.valueOf(prop.getProperty("devMin"));
 	}
 
-	public static void updateLM(String script, String lmPath, String pePath) throws Exception {
-		String command;
-		Process p;
+	public static int updateLM(String script, String lmPath, String pePath) throws Exception {
+		OnlineAPE.bwLogOut.write("BEGIN--updateLM--\n");
+		OnlineAPE.bwLogOut.flush();
+		OnlineAPE.bwLogErr.write("BEGIN--updateLM--\n");
+		OnlineAPE.bwLogErr.flush();
+		
+		String command = script + " " + lmPath + " " + pePath;		
+		ProcessBuilder pb = new ProcessBuilder(Arrays.asList(command.split(" ")));
+		pb.redirectOutput(Redirect.appendTo(OnlineAPE.logOut));
+		pb.redirectError(Redirect.appendTo(OnlineAPE.logErr));
+		Process p = pb.start();
+		int exitVal = p.waitFor();
 
-		command = script + " " + lmPath + " " + pePath;
-		log.debug("Global language model update command is " + command);
-
-		p = Runtime.getRuntime().exec(command);
-		p.waitFor();
+		OnlineAPE.bwLogOut.write("END\n");
+		OnlineAPE.bwLogOut.flush();
+		OnlineAPE.bwLogErr.write("END\n");
+		OnlineAPE.bwLogErr.flush();
+		
+		return exitVal;
 	}
 
 	public static void save(String data, String file) throws Exception {
@@ -561,6 +622,7 @@ public class OnlineAPE {
 
 		while ((line = br.readLine()) != null) {
 			line = line.trim();
+			log.debug(line);
 			String[] toks = line.split(" ", 2);
 			if (toks.length > 1) {
 				String feature = toks[0].replace("=", "");
@@ -615,12 +677,15 @@ public class OnlineAPE {
 	public static String containsWeight(Map<String, String> featureMap, String weight){		
 
 		for(String key : featureMap.keySet()){
+			log.debug("Key = " + key);
+			log.debug("Value = " + featureMap.get(key));
 			for(String val : featureMap.get(key).split(" ")){
 				if(Float.parseFloat(val) == 0){
 					return key;
 				}
 			}
 		}
+		log.info("No feature with weight " + weight);
 		return null;
 	}
 
@@ -661,6 +726,7 @@ public class OnlineAPE {
 		}else{
 			try{
 				featureMap = loadFeatureMap(prevExpPath + "/tune/moses.ini");
+				log.info("Loaded the feature map from " + prevExpPath + "/tune/moses.ini");
 
 				if(!isValidFeatureMap(featureMap)){
 					validFeatureMap = false;
@@ -676,7 +742,7 @@ public class OnlineAPE {
 			}catch(IOException ioe){
 				validFeatureMap = false;
 				log.warn("Warning: Failed to access " + prevExpPath + "/tune/moses.ini for segment ID " + sentID + " (see trace below). The program will use un-tuned feature weights");
-				log.warn(ioe);						
+				log.warn(ioe);
 			}
 		}
 
@@ -695,5 +761,32 @@ public class OnlineAPE {
 			}
 		}
 		return featureMap;
+	}
+
+	public static int call_external_script(String script) throws Exception {
+		OnlineAPE.bwLogOut.write("BEGIN\n");
+		OnlineAPE.bwLogOut.flush();
+		OnlineAPE.bwLogErr.write("BEGIN\n");
+		OnlineAPE.bwLogErr.flush();
+
+		ProcessBuilder pb = new ProcessBuilder(script);
+		pb.redirectOutput(Redirect.appendTo(OnlineAPE.logOut));
+		pb.redirectError(Redirect.appendTo(OnlineAPE.logErr));
+		Process p = pb.start();
+		p.waitFor();
+
+		OnlineAPE.bwLogOut.write("END\n");
+		OnlineAPE.bwLogOut.flush();
+		OnlineAPE.bwLogErr.write("END\n");
+		OnlineAPE.bwLogErr.flush();
+
+		return 0;	
+	}
+
+	public static void initializeLogs() throws Exception{
+		OnlineAPE.logOut = new File(OnlineAPE.workDir + "/externalLog.out");
+		OnlineAPE.logErr = new File(OnlineAPE.workDir + "/externalLog.err");
+		OnlineAPE.bwLogOut = new BufferedWriter(new FileWriter(OnlineAPE.logOut,true));
+		OnlineAPE.bwLogErr = new BufferedWriter(new FileWriter(OnlineAPE.logErr, true));
 	}
 }

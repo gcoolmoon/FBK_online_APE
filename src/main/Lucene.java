@@ -54,7 +54,7 @@ public class Lucene {
 		return q;
 	}
 	
-	public static void add(int id, String src, String mt, String pe, String mtsrc, String mtpeAlign) throws Exception{		
+	public static void add(int id, String src, String mt, String pe, String mtsrc, String pesrc, String mtpeAlign, String pepeAlign) throws Exception{		
 		
 		Document doc = new Document();
 	    doc.add(new IntField("Id", id, Field.Store.YES));
@@ -62,7 +62,9 @@ public class Lucene {
 	    doc.add(new TextField("MTSentence", mt, Field.Store.YES));
 	    doc.add(new TextField("PESentence", pe, Field.Store.YES));
 	    doc.add(new TextField("MTSrcSentence", mtsrc, Field.Store.YES));
-	    doc.add(new TextField("Alignment", mtpeAlign, Field.Store.YES));	    
+	    doc.add(new TextField("PESrcSentence", mtsrc, Field.Store.YES));
+	    doc.add(new TextField("MTPEAlignment", mtpeAlign, Field.Store.YES));	    
+	    doc.add(new TextField("PEPEAlignment", pepeAlign, Field.Store.YES));
 	    OnlineAPE.index.addDocument(doc);
 	    OnlineAPE.index.commit();
 	    OnlineAPE.searcherManager.maybeRefresh();
