@@ -62,7 +62,7 @@ public class Lucene {
 	    doc.add(new TextField("MTSentence", mt, Field.Store.YES));
 	    doc.add(new TextField("PESentence", pe, Field.Store.YES));
 	    doc.add(new TextField("MTSrcSentence", mtsrc, Field.Store.YES));
-	    doc.add(new TextField("PESrcSentence", mtsrc, Field.Store.YES));
+	    doc.add(new TextField("PESrcSentence", pesrc, Field.Store.YES));
 	    doc.add(new TextField("MTPEAlignment", mtpeAlign, Field.Store.YES));	    
 	    doc.add(new TextField("PEPEAlignment", pepeAlign, Field.Store.YES));
 	    OnlineAPE.index.addDocument(doc);
