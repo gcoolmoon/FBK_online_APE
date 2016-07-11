@@ -3,9 +3,11 @@ package main;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
+import java.io.FileFilter;
 import java.io.FileInputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
+import java.io.FilenameFilter;
 import java.io.IOException;
 import java.lang.ProcessBuilder.Redirect;
 import java.util.ArrayList;
@@ -15,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.Collections;
 
 import org.apache.log4j.Logger;
 import org.apache.lucene.analysis.Analyzer;
@@ -46,6 +49,7 @@ public class OnlineAPE {
 	private static float devPercent;
 	private static int devMax;
 	private static int devMin;
+	private static int prevState = 0;
 
 	public static IndexWriter index;
 	public static Analyzer analyzer;
@@ -112,6 +116,45 @@ public class OnlineAPE {
 				log.error(e);
 				System.exit(1);
 			}
+			
+		}
+		else
+		{
+			//check if the working directory doesnt exist  
+			log.info("Checking if working directory does not exist");
+			if(new File(workDir + "/global").exists() && new File(workDir + "/local").exists()){
+				log.debug("Getting the maximum number of the local model");
+				
+				ArrayList<Integer> dirs = new ArrayList<Integer>();
+		        File directory = new File(workDir+"/local");
+
+		        //get all the files from a directory
+
+		        File[] fList = directory.listFiles();
+		        //Arrays.sort(fList, LastM);
+		        for (File file : fList){
+		        	
+		            if (file.isDirectory()){
+		            	if(Integer.parseInt(file.getName()) > OnlineAPE.prevState)
+		            		OnlineAPE.prevState = Integer.parseInt(file.getName());
+		            	//dirs.add(Integer.parseInt(file.getName()));
+		            	//System.out.println(file.getName());
+
+		            }
+
+		        }
+		       // Collections.sort(dirs, Collections.reverseOrder());
+		        //prevState = dirs.get(0);
+		        log.debug("The value of the last item of the previous state is :" + OnlineAPE.prevState);
+		        
+									
+			}
+			else
+			{
+				log.error("The working directory '" + workDir + "'. does not exist. \nPlease specify the correct working directory. The program will Terminate !!!");
+				System.exit(1);	
+			}
+			//check the id of the last model in local 
 		}
 
 		// Initialize Lucene parameters
@@ -160,28 +203,49 @@ public class OnlineAPE {
 		}
 
 		// Create directories
-		try{
-			createDir(OnlineAPE.workDir + "/global/lm");
-			createDir(OnlineAPE.workDir + "/global/lucene");
-			createDir(OnlineAPE.workDir + "/local");
-		}catch(Exception e){
-			log.error("Failed to create initial directories. The program will terminate !!");
-			log.error(e);
-			System.exit(1);
-		}		
+		//we will not need to create 
+//		try{
+//			createDir(OnlineAPE.workDir + "/global/lm");
+//			createDir(OnlineAPE.workDir + "/global/lucene");
+//			createDir(OnlineAPE.workDir + "/local");
+//		}catch(Exception e){
+//			log.error("Failed to create initial directories. The program will terminate !!");
+//			log.error(e);
+//			System.exit(1);
+//		}		
 		
-		int sentID = 0;
-
+		int sentID = OnlineAPE.prevState;
+		if(sentID>0){
+		log.info("Fast forwarding to the " + sentID + "line.");
+        for(int i=0;i<sentID;i++)
+        {
+        	try{
+        		log.debug("Moving ponter to the " + i+1 +"th line for reading.");
+				srcBr.readLine();
+				mtBr.readLine();
+				peBr.readLine();
+				mtsrcBr.readLine(); // Assume we have it
+				pesrcBr.readLine(); // Assume we have it
+				mtpeAlignBr.readLine(); // Assume we have it
+				pepeAlignBr.readLine(); // Assume we have it
+			}catch(Exception e){
+				log.error("Failed to read the " + i+1 + "th line  (see trace below). The File is not complete!!");
+				log.error(e);
+				System.exit(1);
+			}	
+        }
+		}
 		// Begin online automatic post-editing
 		log.info("Starting online APE module");
 		while (true) {			
-
+  // check if the file num is less than the one registered if it is less then continue else go to 
 			long startTime = System.currentTimeMillis();
 
 			sentID += 1;
-
+// check to skip
 			log.info("Processing sentence ID = " + sentID);
-
+// if valid proceed below
+//seek all the file reader to the sent ID
 			String src = null;
 			String mt = null;
 			String pe = null;
@@ -234,10 +298,11 @@ public class OnlineAPE {
 				break;
 			}
 
-			if(new File(expPath).exists()){
-				log.info("Skipping segment ID " + sentID);
-				continue;
-			}			
+//			// comment this
+//			if(new File(expPath).exists()){
+//				log.info("Skipping segment ID " + sentID);
+//				continue;
+//			}			
 
 			// Built joint representation (Assume we already have it)
 			// mtsrc = buildJointRep(mt, src);
