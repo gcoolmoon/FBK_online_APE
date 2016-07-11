@@ -37,7 +37,7 @@ public class OnlineAPE {
 	private static String mtFile;
 	private static String peFile;
 	private static String mtsrcFile;
-	private static String pesrcFile;
+	private static String pesrcFile; 
 	private static String mtpeAlignFile;
 	private static String pepeAlignFile;
 	private static String workDir;
@@ -120,7 +120,7 @@ public class OnlineAPE {
 		}
 		else
 		{
-			//check if the working directory doesnt exist  
+			//check if the working directory does not exist  
 			log.info("Checking if working directory does not exist");
 			if(new File(workDir + "/global").exists() && new File(workDir + "/local").exists()){
 				log.debug("Getting the maximum number of the local model");
